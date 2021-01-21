@@ -13,8 +13,7 @@ from freqtrade.persistence import Trade
 from freqtrade.rpc import RPC, RPCException
 from freqtrade.rpc.fiat_convert import CryptoToFiatConverter
 from freqtrade.state import State
-from tests.conftest import (create_mock_trades, get_patched_freqtradebot,
-                            patch_get_signal)
+from tests.conftest import create_mock_trades, get_patched_freqtradebot, patch_get_signal
 
 
 # Functions for recurrent object patching
@@ -63,15 +62,14 @@ def test_rpc_trade_status(default_conf, ticker, fee, mocker) -> None:
         'fee_close_cost': ANY,
         'fee_close_currency': ANY,
         'open_rate_requested': ANY,
-        'open_trade_price': 0.0010025,
+        'open_trade_value': 0.0010025,
         'close_rate_requested': ANY,
         'sell_reason': ANY,
         'sell_order_status': ANY,
         'min_rate': ANY,
         'max_rate': ANY,
         'strategy': ANY,
-        'ticker_interval': ANY,
-        'timeframe': ANY,
+        'timeframe': 5,
         'open_order_id': ANY,
         'close_date': None,
         'close_date_hum': None,
@@ -88,19 +86,21 @@ def test_rpc_trade_status(default_conf, ticker, fee, mocker) -> None:
         'current_profit': -0.00408133,
         'current_profit_pct': -0.41,
         'current_profit_abs': -4.09e-06,
-        'stop_loss': 9.882e-06,
+        'profit_ratio': -0.00408133,
+        'profit_pct': -0.41,
+        'profit_abs': -4.09e-06,
         'stop_loss_abs': 9.882e-06,
         'stop_loss_pct': -10.0,
         'stop_loss_ratio': -0.1,
         'stoploss_order_id': None,
         'stoploss_last_update': ANY,
         'stoploss_last_update_timestamp': ANY,
-        'initial_stop_loss': 9.882e-06,
         'initial_stop_loss_abs': 9.882e-06,
         'initial_stop_loss_pct': -10.0,
         'initial_stop_loss_ratio': -0.1,
         'stoploss_current_dist': -1.1080000000000002e-06,
         'stoploss_current_dist_ratio': -0.10081893,
+        'stoploss_current_dist_pct': -10.08,
         'stoploss_entry_dist': -0.00010475,
         'stoploss_entry_dist_ratio': -0.10448878,
         'open_order': None,
@@ -127,14 +127,13 @@ def test_rpc_trade_status(default_conf, ticker, fee, mocker) -> None:
         'fee_close_cost': ANY,
         'fee_close_currency': ANY,
         'open_rate_requested': ANY,
-        'open_trade_price': ANY,
+        'open_trade_value': ANY,
         'close_rate_requested': ANY,
         'sell_reason': ANY,
         'sell_order_status': ANY,
         'min_rate': ANY,
         'max_rate': ANY,
         'strategy': ANY,
-        'ticker_interval': ANY,
         'timeframe': ANY,
         'open_order_id': ANY,
         'close_date': None,
@@ -152,19 +151,21 @@ def test_rpc_trade_status(default_conf, ticker, fee, mocker) -> None:
         'current_profit': ANY,
         'current_profit_pct': ANY,
         'current_profit_abs': ANY,
-        'stop_loss': 9.882e-06,
+        'profit_ratio': ANY,
+        'profit_pct': ANY,
+        'profit_abs': ANY,
         'stop_loss_abs': 9.882e-06,
         'stop_loss_pct': -10.0,
         'stop_loss_ratio': -0.1,
         'stoploss_order_id': None,
         'stoploss_last_update': ANY,
         'stoploss_last_update_timestamp': ANY,
-        'initial_stop_loss': 9.882e-06,
         'initial_stop_loss_abs': 9.882e-06,
         'initial_stop_loss_pct': -10.0,
         'initial_stop_loss_ratio': -0.1,
         'stoploss_current_dist': ANY,
         'stoploss_current_dist_ratio': ANY,
+        'stoploss_current_dist_pct': ANY,
         'stoploss_entry_dist': -0.00010475,
         'stoploss_entry_dist_ratio': -0.10448878,
         'open_order': None,
@@ -184,7 +185,7 @@ def test_rpc_status_table(default_conf, ticker, fee, mocker) -> None:
         fetch_ticker=ticker,
         get_fee=fee,
     )
-
+    del default_conf['fiat_display_currency']
     freqtradebot = get_patched_freqtradebot(mocker, default_conf)
     patch_get_signal(freqtradebot, (True, False))
     rpc = RPC(freqtradebot)
@@ -255,11 +256,11 @@ def test_rpc_daily_profit(default_conf, update, ticker, fee,
     assert days['fiat_display_currency'] == default_conf['fiat_display_currency']
     for day in days['data']:
         # [datetime.date(2018, 1, 11), '0.00000000 BTC', '0.000 USD']
-        assert (day['abs_profit'] == '0.00000000' or
-                day['abs_profit'] == '0.00006217')
+        assert (day['abs_profit'] == 0.0 or
+                day['abs_profit'] == 0.00006217)
 
-        assert (day['fiat_value'] == '0.000' or
-                day['fiat_value'] == '0.767')
+        assert (day['fiat_value'] == 0.0 or
+                day['fiat_value'] == 0.76748865)
     # ensure first day is current date
     assert str(days['data'][0]['date']) == str(datetime.utcnow().date())
 
@@ -311,7 +312,6 @@ def test_rpc_delete_trade(mocker, default_conf, fee, markets, caplog):
     with pytest.raises(RPCException, match='invalid argument'):
         rpc._rpc_delete('200')
 
-    create_mock_trades(fee)
     trades = Trade.query.all()
     trades[1].stoploss_order_id = '1234'
     trades[2].stoploss_order_id = '1234'
@@ -667,7 +667,8 @@ def test_rpc_forcesell(default_conf, ticker, fee, mocker) -> None:
             return_value={
                 'status': 'closed',
                 'type': 'limit',
-                'side': 'buy'
+                'side': 'buy',
+                'filled': 0.0,
             }
         ),
         get_fee=fee,
@@ -693,6 +694,7 @@ def test_rpc_forcesell(default_conf, ticker, fee, mocker) -> None:
     msg = rpc._rpc_forcesell('all')
     assert msg == {'result': 'Created sell orders for all open trades.'}
 
+    freqtradebot.enter_positions()
     msg = rpc._rpc_forcesell('1')
     assert msg == {'result': 'Created sell order for trade 1.'}
 
@@ -705,17 +707,26 @@ def test_rpc_forcesell(default_conf, ticker, fee, mocker) -> None:
 
     freqtradebot.state = State.RUNNING
     assert cancel_order_mock.call_count == 0
+    freqtradebot.enter_positions()
     # make an limit-buy open trade
     trade = Trade.query.filter(Trade.id == '1').first()
     filled_amount = trade.amount / 2
+    # Fetch order - it's open first, and closed after cancel_order is called.
     mocker.patch(
         'freqtrade.exchange.Exchange.fetch_order',
-        return_value={
+        side_effect=[{
+            'id': '1234',
             'status': 'open',
             'type': 'limit',
             'side': 'buy',
             'filled': filled_amount
-        }
+        }, {
+            'id': '1234',
+            'status': 'closed',
+            'type': 'limit',
+            'side': 'buy',
+            'filled': filled_amount
+        }]
     )
     # check that the trade is called, which is done by ensuring exchange.cancel_order is called
     # and trade amount is updated
@@ -723,6 +734,16 @@ def test_rpc_forcesell(default_conf, ticker, fee, mocker) -> None:
     assert cancel_order_mock.call_count == 1
     assert trade.amount == filled_amount
 
+    mocker.patch(
+        'freqtrade.exchange.Exchange.fetch_order',
+        return_value={
+            'status': 'open',
+            'type': 'limit',
+            'side': 'buy',
+            'filled': filled_amount
+        })
+
+    freqtradebot.config['max_open_trades'] = 3
     freqtradebot.enter_positions()
     trade = Trade.query.filter(Trade.id == '2').first()
     amount = trade.amount
@@ -742,20 +763,22 @@ def test_rpc_forcesell(default_conf, ticker, fee, mocker) -> None:
     assert cancel_order_mock.call_count == 2
     assert trade.amount == amount
 
-    freqtradebot.enter_positions()
     # make an limit-sell open trade
     mocker.patch(
         'freqtrade.exchange.Exchange.fetch_order',
         return_value={
             'status': 'open',
             'type': 'limit',
-            'side': 'sell'
+            'side': 'sell',
+            'amount': amount,
+            'remaining': amount,
+            'filled': 0.0
         }
     )
     msg = rpc._rpc_forcesell('3')
     assert msg == {'result': 'Created sell order for trade 3.'}
     # status quo, no exchange calls
-    assert cancel_order_mock.call_count == 2
+    assert cancel_order_mock.call_count == 3
 
 
 def test_performance_handle(default_conf, ticker, limit_buy_order, fee,
@@ -814,10 +837,10 @@ def test_rpc_count(mocker, default_conf, ticker, fee) -> None:
     assert counts["current"] == 1
 
 
-def test_rpcforcebuy(mocker, default_conf, ticker, fee, limit_buy_order) -> None:
+def test_rpcforcebuy(mocker, default_conf, ticker, fee, limit_buy_order_open) -> None:
     default_conf['forcebuy_enable'] = True
     mocker.patch('freqtrade.rpc.telegram.Telegram', MagicMock())
-    buy_mm = MagicMock(return_value={'id': limit_buy_order['id']})
+    buy_mm = MagicMock(return_value=limit_buy_order_open)
     mocker.patch.multiple(
         'freqtrade.exchange.Exchange',
         get_balances=MagicMock(return_value=ticker),
@@ -845,7 +868,8 @@ def test_rpcforcebuy(mocker, default_conf, ticker, fee, limit_buy_order) -> None
     assert trade.open_rate == 0.0001
 
     # Test buy pair not with stakes
-    with pytest.raises(RPCException, match=r'Wrong pair selected. Please pairs with stake.*'):
+    with pytest.raises(RPCException,
+                       match=r'Wrong pair selected. Only pairs with stake-currency.*'):
         rpc._rpc_forcebuy('LTC/ETH', 0.0001)
     pair = 'XRP/BTC'
 

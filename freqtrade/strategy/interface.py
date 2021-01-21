@@ -14,11 +14,13 @@ from pandas import DataFrame
 
 from freqtrade.constants import ListPairsWithTimeframes
 from freqtrade.data.dataprovider import DataProvider
-from freqtrade.exceptions import StrategyError, OperationalException
+from freqtrade.exceptions import OperationalException, StrategyError
 from freqtrade.exchange import timeframe_to_minutes
-from freqtrade.persistence import Trade
+from freqtrade.exchange.exchange import timeframe_to_next_date
+from freqtrade.persistence import PairLocks, Trade
 from freqtrade.strategy.strategy_wrapper import strategy_safe_wrapper
 from freqtrade.wallets import Wallets
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,10 @@ class SellType(Enum):
     FORCE_SELL = "force_sell"
     EMERGENCY_SELL = "emergency_sell"
     NONE = ""
+
+    def __str__(self):
+        # explicitly convert to String to help with exporting data.
+        return self.value
 
 
 class SellCheckTuple(NamedTuple):
@@ -117,6 +123,8 @@ class IStrategy(ABC):
     # and wallets - access to the current balance.
     dp: Optional[DataProvider] = None
     wallets: Optional[Wallets] = None
+    # container variable for strategy source code
+    __source__: str = ''
 
     # Definition of plot_config. See plotting documentation for more details.
     plot_config: Dict = {}
@@ -125,7 +133,6 @@ class IStrategy(ABC):
         self.config = config
         # Dict to determine if analysis is necessary
         self._last_candle_seen_per_pair: Dict[str, datetime] = {}
-        self._pair_locked_until: Dict[str, datetime] = {}
 
     @abstractmethod
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -270,7 +277,7 @@ class IStrategy(ABC):
         """
         return self.__class__.__name__
 
-    def lock_pair(self, pair: str, until: datetime) -> None:
+    def lock_pair(self, pair: str, until: datetime, reason: str = None) -> None:
         """
         Locks pair until a given timestamp happens.
         Locked pairs are not analyzed, and are prevented from opening new trades.
@@ -279,9 +286,9 @@ class IStrategy(ABC):
         :param pair: Pair to lock
         :param until: datetime in UTC until the pair should be blocked from opening new trades.
                 Needs to be timezone aware `datetime.now(timezone.utc)`
+        :param reason: Optional string explaining why the pair was locked.
         """
-        if pair not in self._pair_locked_until or self._pair_locked_until[pair] < until:
-            self._pair_locked_until[pair] = until
+        PairLocks.lock_pair(pair, until, reason)
 
     def unlock_pair(self, pair: str) -> None:
         """
@@ -290,16 +297,25 @@ class IStrategy(ABC):
         manually from within the strategy, to allow an easy way to unlock pairs.
         :param pair: Unlock pair to allow trading again
         """
-        if pair in self._pair_locked_until:
-            del self._pair_locked_until[pair]
+        PairLocks.unlock_pair(pair, datetime.now(timezone.utc))
 
-    def is_pair_locked(self, pair: str) -> bool:
+    def is_pair_locked(self, pair: str, candle_date: datetime = None) -> bool:
         """
         Checks if a pair is currently locked
+        The 2nd, optional parameter ensures that locks are applied until the new candle arrives,
+        and not stop at 14:00:00 - while the next candle arrives at 14:00:02 leaving a gap
+        of 2 seconds for a buy to happen on an old signal.
+        :param: pair: "Pair to check"
+        :param candle_date: Date of the last candle. Optional, defaults to current date
+        :returns: locking state of the pair in question.
         """
-        if pair not in self._pair_locked_until:
-            return False
-        return self._pair_locked_until[pair] >= datetime.now(timezone.utc)
+
+        if not candle_date:
+            # Simple call ...
+            return PairLocks.is_pair_locked(pair)
+        else:
+            lock_time = timeframe_to_next_date(self.timeframe, candle_date)
+            return PairLocks.is_pair_locked(pair, lock_time)
 
     def analyze_ticker(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         """
@@ -430,7 +446,7 @@ class IStrategy(ABC):
         if latest_date < (arrow.utcnow().shift(minutes=-(timeframe_minutes * 2 + offset))):
             logger.warning(
                 'Outdated history for pair %s. Last tick is %s minutes old',
-                pair, (arrow.utcnow() - latest_date).seconds // 60
+                pair, int((arrow.utcnow() - latest_date).total_seconds() // 60)
             )
             return False, False
 
@@ -460,39 +476,43 @@ class IStrategy(ABC):
                                               current_time=date, current_profit=current_profit,
                                               force_stoploss=force_stoploss, high=high)
 
-        if stoplossflag.sell_flag:
-            logger.debug(f"{trade.pair} - Stoploss hit. sell_flag=True, "
-                         f"sell_type={stoplossflag.sell_type}")
-            return stoplossflag
-
         # Set current rate to high for backtesting sell
         current_rate = high or rate
         current_profit = trade.calc_profit_ratio(current_rate)
         config_ask_strategy = self.config.get('ask_strategy', {})
 
-        if buy and config_ask_strategy.get('ignore_roi_if_buy_signal', False):
-            # This one is noisy, commented out
-            # logger.debug(f"{trade.pair} - Buy signal still active. sell_flag=False")
-            return SellCheckTuple(sell_flag=False, sell_type=SellType.NONE)
+        # if buy signal and ignore_roi is set, we don't need to evaluate min_roi.
+        roi_reached = (not (buy and config_ask_strategy.get('ignore_roi_if_buy_signal', False))
+                       and self.min_roi_reached(trade=trade, current_profit=current_profit,
+                                                current_time=date))
 
-        # Check if minimal roi has been reached and no longer in buy conditions (avoiding a fee)
-        if self.min_roi_reached(trade=trade, current_profit=current_profit, current_time=date):
+        if config_ask_strategy.get('sell_profit_only', False) and trade.calc_profit(rate=rate) <= 0:
+            # Negative profits and sell_profit_only - ignore sell signal
+            sell_signal = False
+        else:
+            sell_signal = sell and not buy and config_ask_strategy.get('use_sell_signal', True)
+            # TODO: return here if sell-signal should be favored over ROI
+
+        # Start evaluations
+        # Sequence:
+        # ROI (if not stoploss)
+        # Sell-signal
+        # Stoploss
+        if roi_reached and stoplossflag.sell_type != SellType.STOP_LOSS:
             logger.debug(f"{trade.pair} - Required profit reached. sell_flag=True, "
                          f"sell_type=SellType.ROI")
             return SellCheckTuple(sell_flag=True, sell_type=SellType.ROI)
 
-        if config_ask_strategy.get('sell_profit_only', False):
-            # This one is noisy, commented out
-            # logger.debug(f"{trade.pair} - Checking if trade is profitable...")
-            if trade.calc_profit(rate=rate) <= 0:
-                # This one is noisy, commented out
-                # logger.debug(f"{trade.pair} - Trade is not profitable. sell_flag=False")
-                return SellCheckTuple(sell_flag=False, sell_type=SellType.NONE)
-
-        if sell and not buy and config_ask_strategy.get('use_sell_signal', True):
+        if sell_signal:
             logger.debug(f"{trade.pair} - Sell signal received. sell_flag=True, "
                          f"sell_type=SellType.SELL_SIGNAL")
             return SellCheckTuple(sell_flag=True, sell_type=SellType.SELL_SIGNAL)
+
+        if stoplossflag.sell_flag:
+
+            logger.debug(f"{trade.pair} - Stoploss hit. sell_flag=True, "
+                         f"sell_type={stoplossflag.sell_type}")
+            return stoplossflag
 
         # This one is noisy, commented out...
         # logger.debug(f"{trade.pair} - No sell signal. sell_flag=False")
@@ -531,8 +551,7 @@ class IStrategy(ABC):
         # evaluate if the stoploss was hit if stoploss is not on exchange
         # in Dry-Run, this handles stoploss logic as well, as the logic will not be different to
         # regular stoploss handling.
-        if ((self.stoploss is not None) and
-            (trade.stop_loss >= current_rate) and
+        if ((trade.stop_loss >= current_rate) and
                 (not self.order_types.get('stoploss_on_exchange') or self.config['dry_run'])):
 
             sell_type = SellType.STOP_LOSS
