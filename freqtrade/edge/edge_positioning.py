@@ -84,9 +84,8 @@ class Edge:
             self.fee = self.exchange.get_fee(symbol=expand_pairlist(
                 self.config['exchange']['pair_whitelist'], list(self.exchange.markets))[0])
 
-    def calculate(self) -> bool:
-        pairs = expand_pairlist(self.config['exchange']['pair_whitelist'],
-                                list(self.exchange.markets))
+    def calculate(self, pairs: List[str]) -> bool:
+
         heartbeat = self.edge_config.get('process_throttle_secs')
 
         if (self._last_updated > 0) and (
@@ -104,6 +103,7 @@ class Edge:
                 exchange=self.exchange,
                 timeframe=self.strategy.timeframe,
                 timerange=self._timerange,
+                data_format=self.config.get('dataformat_ohlcv', 'json'),
             )
 
         data = load_data(
@@ -159,7 +159,8 @@ class Edge:
         available_capital = (total_capital + capital_in_trade) * self._capital_ratio
         allowed_capital_at_risk = available_capital * self._allowed_risk
         max_position_size = abs(allowed_capital_at_risk / stoploss)
-        position_size = min(max_position_size, free_capital)
+        # Position size must be below available capital.
+        position_size = min(min(max_position_size, free_capital), available_capital)
         if pair in self._cached_pairs:
             logger.info(
                 'winrate: %s, expectancy: %s, position size: %s, pair: %s,'

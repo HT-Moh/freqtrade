@@ -85,7 +85,7 @@ class IPairList(LoggingMixin, ABC):
         position in the chain.
 
         :param cached_pairlist: Previously generated pairlist (cached)
-        :param tickers: Tickers (from exchange.get_tickers()).
+        :param tickers: Tickers (from exchange.get_tickers()). May be cached.
         :return: List of pairs
         """
         raise OperationalException("This Pairlist Handler should not be used "
@@ -168,7 +168,7 @@ class IPairList(LoggingMixin, ABC):
             # Check if market is active
             market = markets[pair]
             if not market_is_active(market):
-                logger.info(f"Ignoring {pair} from whitelist. Market is not active.")
+                self.log_once(f"Ignoring {pair} from whitelist. Market is not active.", logger.info)
                 continue
             if pair not in sanitized_whitelist:
                 sanitized_whitelist.append(pair)
