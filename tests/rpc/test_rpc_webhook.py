@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 from requests import RequestException
 
-from freqtrade.rpc import RPC, RPCMessageType
+from freqtrade.enums import RPCMessageType, SellType
+from freqtrade.rpc import RPC
 from freqtrade.rpc.webhook import Webhook
-from freqtrade.strategy.interface import SellType
 from tests.conftest import get_patched_freqtradebot, log_has
 
 
@@ -292,3 +292,15 @@ def test__send_msg_with_json_format(default_conf, mocker, caplog):
     webhook._send_msg(msg)
 
     assert post.call_args[1] == {'json': msg}
+
+
+def test__send_msg_with_raw_format(default_conf, mocker, caplog):
+    default_conf["webhook"] = get_webhook_dict()
+    default_conf["webhook"]["format"] = "raw"
+    webhook = Webhook(RPC(get_patched_freqtradebot(mocker, default_conf)), default_conf)
+    msg = {'data': 'Hello'}
+    post = MagicMock()
+    mocker.patch("freqtrade.rpc.webhook.post", post)
+    webhook._send_msg(msg)
+
+    assert post.call_args[1] == {'data': msg['data'], 'headers': {'Content-Type': 'text/plain'}}

@@ -19,26 +19,55 @@ from tests.conftest import get_default_conf
 EXCHANGES = {
     'bittrex': {
         'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
         'hasQuoteVolume': False,
         'timeframe': '1h',
     },
     'binance': {
         'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
         'hasQuoteVolume': True,
         'timeframe': '5m',
     },
     'kraken': {
         'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
         'hasQuoteVolume': True,
         'timeframe': '5m',
     },
     'ftx': {
         'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
         'hasQuoteVolume': True,
         'timeframe': '5m',
     },
     'kucoin': {
         'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
+        'hasQuoteVolume': True,
+        'timeframe': '5m',
+    },
+    'gateio': {
+        'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
+        'hasQuoteVolume': True,
+        'timeframe': '5m',
+    },
+    'okx': {
+        'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
+        'hasQuoteVolume': True,
+        'timeframe': '5m',
+    },
+    'huobi': {
+        'pair': 'BTC/USDT',
+        'stake_currency': 'USDT',
+        'hasQuoteVolume': True,
+        'timeframe': '5m',
+    },
+    'bitvavo': {
+        'pair': 'BTC/EUR',
+        'stake_currency': 'EUR',
         'hasQuoteVolume': True,
         'timeframe': '5m',
     },
@@ -49,6 +78,8 @@ EXCHANGES = {
 def exchange_conf():
     config = get_default_conf((Path(__file__).parent / "testdata").resolve())
     config['exchange']['pair_whitelist'] = []
+    config['exchange']['key'] = ''
+    config['exchange']['secret'] = ''
     config['dry_run'] = False
     return config
 
@@ -56,6 +87,7 @@ def exchange_conf():
 @pytest.fixture(params=EXCHANGES, scope="class")
 def exchange(request, exchange_conf):
     exchange_conf['exchange']['name'] = request.param
+    exchange_conf['stake_currency'] = EXCHANGES[request.param]['stake_currency']
     exchange = ExchangeResolver.load_exchange(request.param, exchange_conf, validate=True)
 
     yield exchange, request.param
@@ -114,7 +146,10 @@ class TestCCXTExchange():
             else:
                 next_limit = exchange.get_next_limit_in_list(
                     val, l2_limit_range, l2_limit_range_required)
-                if next_limit is None or next_limit > 200:
+                if next_limit is None:
+                    assert len(l2['asks']) > 100
+                    assert len(l2['asks']) > 100
+                elif next_limit > 200:
                     # Large orderbook sizes can be a problem for some exchanges (bitrex ...)
                     assert len(l2['asks']) > 200
                     assert len(l2['asks']) > 200
@@ -142,8 +177,8 @@ class TestCCXTExchange():
     def test_ccxt_get_fee(self, exchange):
         exchange, exchangename = exchange
         pair = EXCHANGES[exchangename]['pair']
-
-        assert 0 < exchange.get_fee(pair, 'limit', 'buy') < 1
-        assert 0 < exchange.get_fee(pair, 'limit', 'sell') < 1
-        assert 0 < exchange.get_fee(pair, 'market', 'buy') < 1
-        assert 0 < exchange.get_fee(pair, 'market', 'sell') < 1
+        threshold = 0.01
+        assert 0 < exchange.get_fee(pair, 'limit', 'buy') < threshold
+        assert 0 < exchange.get_fee(pair, 'limit', 'sell') < threshold
+        assert 0 < exchange.get_fee(pair, 'market', 'buy') < threshold
+        assert 0 < exchange.get_fee(pair, 'market', 'sell') < threshold

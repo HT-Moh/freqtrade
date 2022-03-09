@@ -2,12 +2,15 @@
 Various tool function for Freqtrade and scripts
 """
 import gzip
+import hashlib
 import logging
 import re
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, List, Union
 from typing.io import IO
+from urllib.parse import urlparse
 
 import rapidjson
 
@@ -26,18 +29,23 @@ def decimals_per_coin(coin: str):
     return DECIMALS_PER_COIN.get(coin, DECIMAL_PER_COIN_FALLBACK)
 
 
-def round_coin_value(value: float, coin: str, show_coin_name=True) -> str:
+def round_coin_value(
+        value: float, coin: str, show_coin_name=True, keep_trailing_zeros=False) -> str:
     """
     Get price value for this coin
     :param value: Value to be printed
     :param coin: Which coin are we printing the price / value for
     :param show_coin_name: Return string in format: "222.22 USDT" or "222.22"
+    :param keep_trailing_zeros: Keep trailing zeros "222.200" vs. "222.2"
     :return: Formatted / rounded value (with or without coin name)
     """
+    val = f"{value:.{decimals_per_coin(coin)}f}"
+    if not keep_trailing_zeros:
+        val = val.rstrip('0').rstrip('.')
     if show_coin_name:
-        return f"{value:.{decimals_per_coin(coin)}f} {coin}"
-    else:
-        return f"{value:.{decimals_per_coin(coin)}f}"
+        val = f"{val} {coin}"
+
+    return val
 
 
 def shorten_date(_date: str) -> str:
@@ -56,6 +64,7 @@ def file_dump_json(filename: Path, data: Any, is_zip: bool = False, log: bool = 
     """
     Dump JSON data into a file
     :param filename: file to create
+    :param is_zip: if file should be zip
     :param data: JSON Data to save
     :return:
     """
@@ -202,3 +211,58 @@ def render_template_with_fallback(templatefile: str, templatefallbackfile: str,
         return render_template(templatefile, arguments)
     except TemplateNotFound:
         return render_template(templatefallbackfile, arguments)
+
+
+def chunks(lst: List[Any], n: int) -> Iterator[List[Any]]:
+    """
+    Split lst into chunks of the size n.
+    :param lst: list to split into chunks
+    :param n: number of max elements per chunk
+    :return: None
+    """
+    for chunk in range(0, len(lst), n):
+        yield (lst[chunk:chunk + n])
+
+
+def parse_db_uri_for_logging(uri: str):
+    """
+    Helper method to parse the DB URI and return the same DB URI with the password censored
+    if it contains it. Otherwise, return the DB URI unchanged
+    :param uri: DB URI to parse for logging
+    """
+    parsed_db_uri = urlparse(uri)
+    if not parsed_db_uri.netloc:  # No need for censoring as no password was provided
+        return uri
+    pwd = parsed_db_uri.netloc.split(':')[1].split('@')[0]
+    return parsed_db_uri.geturl().replace(f':{pwd}@', ':*****@')
+
+
+def get_strategy_run_id(strategy) -> str:
+    """
+    Generate unique identification hash for a backtest run. Identical config and strategy file will
+    always return an identical hash.
+    :param strategy: strategy object.
+    :return: hex string id.
+    """
+    digest = hashlib.sha1()
+    config = deepcopy(strategy.config)
+
+    # Options that have no impact on results of individual backtest.
+    not_important_keys = ('strategy_list', 'original_config', 'telegram', 'api_server')
+    for k in not_important_keys:
+        if k in config:
+            del config[k]
+
+    # Explicitly allow NaN values (e.g. max_open_trades).
+    # as it does not matter for getting the hash.
+    digest.update(rapidjson.dumps(config, default=str,
+                                  number_mode=rapidjson.NM_NAN).encode('utf-8'))
+    with open(strategy.__file__, 'rb') as fp:
+        digest.update(fp.read())
+    return digest.hexdigest().lower()
+
+
+def get_backtest_metadata_filename(filename: Union[Path, str]) -> Path:
+    """Return metadata filename for specified backtest results file."""
+    filename = Path(filename)
+    return filename.parent / Path(f'{filename.stem}.meta{filename.suffix}')

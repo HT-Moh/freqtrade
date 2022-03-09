@@ -34,20 +34,20 @@ class SpreadFilter(IPairList):
         Short whitelist method description - used for startup-messages
         """
         return (f"{self.name} - Filtering pairs with ask/bid diff above "
-                f"{self._max_spread_ratio * 100}%.")
+                f"{self._max_spread_ratio:.2%}.")
 
     def _validate_pair(self, pair: str, ticker: Dict[str, Any]) -> bool:
         """
         Validate spread for the ticker
         :param pair: Pair that's currently validated
-        :param ticker: ticker dict as returned from ccxt.load_markets()
+        :param ticker: ticker dict as returned from ccxt.fetch_tickers()
         :return: True if the pair can stay, false if it should be removed
         """
         if 'bid' in ticker and 'ask' in ticker and ticker['ask']:
             spread = 1 - ticker['bid'] / ticker['ask']
             if spread > self._max_spread_ratio:
                 self.log_once(f"Removed {pair} from whitelist, because spread "
-                              f"{spread * 100:.3f}% > {self._max_spread_ratio * 100}%",
+                              f"{spread:.3%} > {self._max_spread_ratio:.3%}",
                               logger.info)
                 return False
             else:

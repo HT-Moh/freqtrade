@@ -1,6 +1,6 @@
 """ Kraken exchange subclass """
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import ccxt
 
@@ -33,6 +33,12 @@ class Kraken(Exchange):
         return (parent_check and
                 market.get('darkpool', False) is False)
 
+    def get_tickers(self, symbols: List[str] = None, cached: bool = False) -> Dict:
+        # Only fetch tickers for current stake currency
+        # Otherwise the request for kraken becomes too large.
+        symbols = list(self.get_markets(quote_currencies=[self._config['stake_currency']]))
+        return super().get_tickers(symbols=symbols, cached=cached)
+
     @retrier
     def get_balances(self) -> dict:
         if self._config['dry_run']:
@@ -49,10 +55,12 @@ class Kraken(Exchange):
             orders = self._api.fetch_open_orders()
             order_list = [(x["symbol"].split("/")[0 if x["side"] == "sell" else 1],
                            x["remaining"] if x["side"] == "sell" else x["remaining"] * x["price"],
-                           # Don't remove the below comment, this can be important for debuggung
+                           # Don't remove the below comment, this can be important for debugging
                            # x["side"], x["amount"],
                            ) for x in orders]
             for bal in balances:
+                if not isinstance(balances[bal], dict):
+                    continue
                 balances[bal]['used'] = sum(order[1] for order in order_list if order[0] == bal)
                 balances[bal]['free'] = balances[bal]['total'] - balances[bal]['used']
 
@@ -78,6 +86,8 @@ class Kraken(Exchange):
         """
         Creates a stoploss market order.
         Stoploss market orders is the only stoploss type supported by kraken.
+        TODO: investigate if this can be combined with generic implementation
+              (careful, prices are reversed)
         """
         params = self._params.copy()
 
@@ -93,7 +103,7 @@ class Kraken(Exchange):
 
         if self._config['dry_run']:
             dry_order = self.create_dry_run_order(
-                pair, ordertype, "sell", amount, stop_price)
+                pair, ordertype, "sell", amount, stop_price, stop_loss=True)
             return dry_order
 
         try:
@@ -101,6 +111,7 @@ class Kraken(Exchange):
 
             order = self._api.create_order(symbol=pair, type=ordertype, side='sell',
                                            amount=amount, price=stop_price, params=params)
+            self._log_exchange_response('create_stoploss_order', order)
             logger.info('stoploss order added for %s. '
                         'stop price: %s.', pair, stop_price)
             return order

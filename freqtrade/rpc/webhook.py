@@ -2,11 +2,13 @@
 This module manages webhook communication
 """
 import logging
+import time
 from typing import Any, Dict
 
 from requests import RequestException, post
 
-from freqtrade.rpc import RPC, RPCHandler, RPCMessageType
+from freqtrade.enums import RPCMessageType
+from freqtrade.rpc import RPC, RPCHandler
 
 
 logger = logging.getLogger(__name__)
@@ -27,12 +29,9 @@ class Webhook(RPCHandler):
         super().__init__(rpc, config)
 
         self._url = self._config['webhook']['url']
-
         self._format = self._config['webhook'].get('format', 'form')
-
-        if self._format != 'form' and self._format != 'json':
-            raise NotImplementedError('Unknown webhook format `{}`, possible values are '
-                                      '`form` (default) and `json`'.format(self._format))
+        self._retries = self._config['webhook'].get('retries', 0)
+        self._retry_delay = self._config['webhook'].get('retry_delay', 0.1)
 
     def cleanup(self) -> None:
         """
@@ -76,14 +75,30 @@ class Webhook(RPCHandler):
     def _send_msg(self, payload: dict) -> None:
         """do the actual call to the webhook"""
 
-        if self._format == 'form':
-            kwargs = {'data': payload}
-        elif self._format == 'json':
-            kwargs = {'json': payload}
-        else:
-            raise NotImplementedError('Unknown format: {}'.format(self._format))
+        success = False
+        attempts = 0
+        while not success and attempts <= self._retries:
+            if attempts:
+                if self._retry_delay:
+                    time.sleep(self._retry_delay)
+                logger.info("Retrying webhook...")
 
-        try:
-            post(self._url, **kwargs)
-        except RequestException as exc:
-            logger.warning("Could not call webhook url. Exception: %s", exc)
+            attempts += 1
+
+            try:
+                if self._format == 'form':
+                    response = post(self._url, data=payload)
+                elif self._format == 'json':
+                    response = post(self._url, json=payload)
+                elif self._format == 'raw':
+                    response = post(self._url, data=payload['data'],
+                                    headers={'Content-Type': 'text/plain'})
+                else:
+                    raise NotImplementedError('Unknown format: {}'.format(self._format))
+
+                # Throw a RequestException if the post was not successful
+                response.raise_for_status()
+                success = True
+
+            except RequestException as exc:
+                logger.warning("Could not call webhook url. Exception: %s", exc)

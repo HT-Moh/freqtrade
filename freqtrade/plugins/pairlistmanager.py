@@ -2,13 +2,14 @@
 PairList manager class
 """
 import logging
-from copy import deepcopy
-from typing import Any, Dict, List
+from functools import partial
+from typing import Dict, List
 
 from cachetools import TTLCache, cached
 
 from freqtrade.constants import ListPairsWithTimeframes
 from freqtrade.exceptions import OperationalException
+from freqtrade.mixins import LoggingMixin
 from freqtrade.plugins.pairlist.IPairList import IPairList
 from freqtrade.plugins.pairlist.pairlist_helpers import expand_pairlist
 from freqtrade.resolvers import PairListResolver
@@ -17,7 +18,7 @@ from freqtrade.resolvers import PairListResolver
 logger = logging.getLogger(__name__)
 
 
-class PairListManager():
+class PairListManager(LoggingMixin):
 
     def __init__(self, exchange, config: dict) -> None:
         self._exchange = exchange
@@ -28,18 +29,21 @@ class PairListManager():
         self._tickers_needed = False
         for pairlist_handler_config in self._config.get('pairlists', None):
             pairlist_handler = PairListResolver.load_pairlist(
-                    pairlist_handler_config['method'],
-                    exchange=exchange,
-                    pairlistmanager=self,
-                    config=config,
-                    pairlistconfig=pairlist_handler_config,
-                    pairlist_pos=len(self._pairlist_handlers)
-                    )
+                pairlist_handler_config['method'],
+                exchange=exchange,
+                pairlistmanager=self,
+                config=config,
+                pairlistconfig=pairlist_handler_config,
+                pairlist_pos=len(self._pairlist_handlers)
+            )
             self._tickers_needed |= pairlist_handler.needstickers
             self._pairlist_handlers.append(pairlist_handler)
 
         if not self._pairlist_handlers:
             raise OperationalException("No Pairlist Handlers defined")
+
+        refresh_period = config.get('pairlist_refresh_period', 3600)
+        LoggingMixin.__init__(self, logger, refresh_period)
 
     @property
     def whitelist(self) -> List[str]:
@@ -79,14 +83,12 @@ class PairListManager():
         if self._tickers_needed:
             tickers = self._get_cached_tickers()
 
-        # Adjust whitelist if filters are using tickers
-        pairlist = self._prepare_whitelist(self._whitelist.copy(), tickers)
-
         # Generate the pairlist with first Pairlist Handler in the chain
-        pairlist = self._pairlist_handlers[0].gen_pairlist(self._whitelist, tickers)
+        pairlist = self._pairlist_handlers[0].gen_pairlist(tickers)
 
         # Process all Pairlist Handlers in the chain
-        for pairlist_handler in self._pairlist_handlers:
+        # except for the first one, which is the generator.
+        for pairlist_handler in self._pairlist_handlers[1:]:
             pairlist = pairlist_handler.filter_pairlist(pairlist, tickers)
 
         # Validation against blacklist happens after the chain of Pairlist Handlers
@@ -94,19 +96,6 @@ class PairListManager():
         pairlist = self.verify_blacklist(pairlist, logger.warning)
 
         self._whitelist = pairlist
-
-    def _prepare_whitelist(self, pairlist: List[str], tickers: Dict[str, Any]) -> List[str]:
-        """
-        Prepare sanitized pairlist for Pairlist Handlers that use tickers data - remove
-        pairs that do not have ticker available
-        """
-        if self._tickers_needed:
-            # Copy list since we're modifying this list
-            for p in deepcopy(pairlist):
-                if p not in tickers:
-                    pairlist.remove(p)
-
-        return pairlist
 
     def verify_blacklist(self, pairlist: List[str], logmethod) -> List[str]:
         """
@@ -123,9 +112,10 @@ class PairListManager():
         except ValueError as err:
             logger.error(f"Pair blacklist contains an invalid Wildcard: {err}")
             return []
-        for pair in deepcopy(pairlist):
+        log_once = partial(self.log_once, logmethod=logmethod)
+        for pair in pairlist.copy():
             if pair in blacklist:
-                logmethod(f"Pair {pair} in your blacklist. Removing it from whitelist...")
+                log_once(f"Pair {pair} in your blacklist. Removing it from whitelist...")
                 pairlist.remove(pair)
         return pairlist
 

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from freqtrade.misc import (decimals_per_coin, file_dump_json, file_load_json, format_ms_time,
-                            pair_to_filename, plural, render_template,
+                            pair_to_filename, parse_db_uri_for_logging, plural, render_template,
                             render_template_with_fallback, round_coin_value, safe_value_fallback,
                             safe_value_fallback2, shorten_date)
 
@@ -21,16 +21,19 @@ def test_decimals_per_coin():
 
 def test_round_coin_value():
     assert round_coin_value(222.222222, 'USDT') == '222.222 USDT'
-    assert round_coin_value(222.2, 'USDT') == '222.200 USDT'
+    assert round_coin_value(222.2, 'USDT', keep_trailing_zeros=True) == '222.200 USDT'
+    assert round_coin_value(222.2, 'USDT') == '222.2 USDT'
     assert round_coin_value(222.12745, 'EUR') == '222.127 EUR'
     assert round_coin_value(0.1274512123, 'BTC') == '0.12745121 BTC'
     assert round_coin_value(0.1274512123, 'ETH') == '0.12745 ETH'
 
     assert round_coin_value(222.222222, 'USDT', False) == '222.222'
-    assert round_coin_value(222.2, 'USDT', False) == '222.200'
+    assert round_coin_value(222.2, 'USDT', False) == '222.2'
+    assert round_coin_value(222.00, 'USDT', False) == '222'
     assert round_coin_value(222.12745, 'EUR', False) == '222.127'
     assert round_coin_value(0.1274512123, 'BTC', False) == '0.12745121'
     assert round_coin_value(0.1274512123, 'ETH', False) == '0.12745'
+    assert round_coin_value(222.2, 'USDT', False, True) == '222.200'
 
 
 def test_shorten_date() -> None:
@@ -67,6 +70,9 @@ def test_file_load_json(mocker, testdatadir) -> None:
 
 @pytest.mark.parametrize("pair,expected_result", [
     ("ETH/BTC", 'ETH_BTC'),
+    ("ETH/USDT", 'ETH_USDT'),
+    ("ETH/USDT:USDT", 'ETH_USDT_USDT'),  # swap with USDT as settlement currency
+    ("ETH/USDT:USDT-210625", 'ETH_USDT_USDT_210625'),  # expiring futures
     ("Fabric Token/ETH", 'Fabric_Token_ETH'),
     ("ETHH20", 'ETHH20'),
     (".XBTBON2H", '_XBTBON2H'),
@@ -179,3 +185,20 @@ def test_render_template_fallback(mocker):
     )
     assert isinstance(val, str)
     assert 'if self.dp' in val
+
+
+@pytest.mark.parametrize('conn_url,expected', [
+    ("postgresql+psycopg2://scott123:scott123@host:1245/dbname",
+     "postgresql+psycopg2://scott123:*****@host:1245/dbname"),
+    ("postgresql+psycopg2://scott123:scott123@host.name.com/dbname",
+     "postgresql+psycopg2://scott123:*****@host.name.com/dbname"),
+    ("mariadb+mariadbconnector://app_user:Password123!@127.0.0.1:3306/company",
+     "mariadb+mariadbconnector://app_user:*****@127.0.0.1:3306/company"),
+    ("mysql+pymysql://user:pass@some_mariadb/dbname?charset=utf8mb4",
+     "mysql+pymysql://user:*****@some_mariadb/dbname?charset=utf8mb4"),
+    ("sqlite:////freqtrade/user_data/tradesv3.sqlite",
+     "sqlite:////freqtrade/user_data/tradesv3.sqlite"),
+])
+def test_parse_db_uri_for_logging(conn_url, expected) -> None:
+
+    assert parse_db_uri_for_logging(conn_url) == expected
