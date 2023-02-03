@@ -2,19 +2,20 @@
 Various tool function for Freqtrade and scripts
 """
 import gzip
-import hashlib
 import logging
 import re
-from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator, List, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
 from typing.io import IO
 from urllib.parse import urlparse
 
+import orjson
+import pandas as pd
 import rapidjson
 
 from freqtrade.constants import DECIMAL_PER_COIN_FALLBACK, DECIMALS_PER_COIN
+from freqtrade.enums import SignalTagType, SignalType
 
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,22 @@ def file_dump_json(filename: Path, data: Any, is_zip: bool = False, log: bool = 
     logger.debug(f'done json to "{filename}"')
 
 
+def file_dump_joblib(filename: Path, data: Any, log: bool = True) -> None:
+    """
+    Dump object data into a file
+    :param filename: file to create
+    :param data: Object data to save
+    :return:
+    """
+    import joblib
+
+    if log:
+        logger.info(f'dumping joblib to "{filename}"')
+    with open(filename, 'wb') as fp:
+        joblib.dump(data, fp)
+    logger.debug(f'done joblib dump to "{filename}"')
+
+
 def json_load(datafile: IO) -> Any:
     """
     load data with rapidjson
@@ -116,7 +133,7 @@ def file_load_json(file):
 
 
 def pair_to_filename(pair: str) -> str:
-    for ch in ['/', '-', ' ', '.', '@', '$', '+', ':']:
+    for ch in ['/', ' ', '.', '@', '$', '+', ':']:
         pair = pair.replace(ch, '_')
     return pair
 
@@ -126,10 +143,10 @@ def format_ms_time(date: int) -> str:
     convert MS date to readable format.
     : epoch-string in ms
     """
-    return datetime.fromtimestamp(date/1000.0).strftime('%Y-%m-%dT%H:%M:%S')
+    return datetime.fromtimestamp(date / 1000.0).strftime('%Y-%m-%dT%H:%M:%S')
 
 
-def deep_merge_dicts(source, destination):
+def deep_merge_dicts(source, destination, allow_null_overrides: bool = True):
     """
     Values from Source override destination, destination is returned (and modified!!)
     Sample:
@@ -142,8 +159,8 @@ def deep_merge_dicts(source, destination):
         if isinstance(value, dict):
             # get node or create one
             node = destination.setdefault(key, {})
-            deep_merge_dicts(value, node)
-        else:
+            deep_merge_dicts(value, node, allow_null_overrides)
+        elif value is not None or allow_null_overrides:
             destination[key] = value
 
     return destination
@@ -170,7 +187,10 @@ def safe_value_fallback(obj: dict, key1: str, key2: str, default_value=None):
     return default_value
 
 
-def safe_value_fallback2(dict1: dict, dict2: dict, key1: str, key2: str, default_value=None):
+dictMap = Union[Dict[str, Any], Mapping[str, Any]]
+
+
+def safe_value_fallback2(dict1: dictMap, dict2: dictMap, key1: str, key2: str, default_value=None):
     """
     Search a value in dict1, return this if it's not None.
     Fall back to dict2 - return key2 from dict2 if it's not None.
@@ -185,7 +205,7 @@ def safe_value_fallback2(dict1: dict, dict2: dict, key1: str, key2: str, default
     return default_value
 
 
-def plural(num: float, singular: str, plural: str = None) -> str:
+def plural(num: float, singular: str, plural: Optional[str] = None) -> str:
     return singular if (num == 1 or num == -1) else plural or singular + 's'
 
 
@@ -237,32 +257,67 @@ def parse_db_uri_for_logging(uri: str):
     return parsed_db_uri.geturl().replace(f':{pwd}@', ':*****@')
 
 
-def get_strategy_run_id(strategy) -> str:
+def dataframe_to_json(dataframe: pd.DataFrame) -> str:
     """
-    Generate unique identification hash for a backtest run. Identical config and strategy file will
-    always return an identical hash.
-    :param strategy: strategy object.
-    :return: hex string id.
+    Serialize a DataFrame for transmission over the wire using JSON
+    :param dataframe: A pandas DataFrame
+    :returns: A JSON string of the pandas DataFrame
     """
-    digest = hashlib.sha1()
-    config = deepcopy(strategy.config)
+    # https://github.com/pandas-dev/pandas/issues/24889
+    # https://github.com/pandas-dev/pandas/issues/40443
+    # We need to convert to a dict to avoid mem leak
+    def default(z):
+        if isinstance(z, pd.Timestamp):
+            return z.timestamp() * 1e3
+        if z is pd.NaT:
+            return 'NaT'
+        raise TypeError
 
-    # Options that have no impact on results of individual backtest.
-    not_important_keys = ('strategy_list', 'original_config', 'telegram', 'api_server')
-    for k in not_important_keys:
-        if k in config:
-            del config[k]
-
-    # Explicitly allow NaN values (e.g. max_open_trades).
-    # as it does not matter for getting the hash.
-    digest.update(rapidjson.dumps(config, default=str,
-                                  number_mode=rapidjson.NM_NAN).encode('utf-8'))
-    with open(strategy.__file__, 'rb') as fp:
-        digest.update(fp.read())
-    return digest.hexdigest().lower()
+    return str(orjson.dumps(dataframe.to_dict(orient='split'), default=default), 'utf-8')
 
 
-def get_backtest_metadata_filename(filename: Union[Path, str]) -> Path:
-    """Return metadata filename for specified backtest results file."""
-    filename = Path(filename)
-    return filename.parent / Path(f'{filename.stem}.meta{filename.suffix}')
+def json_to_dataframe(data: str) -> pd.DataFrame:
+    """
+    Deserialize JSON into a DataFrame
+    :param data: A JSON string
+    :returns: A pandas DataFrame from the JSON string
+    """
+    dataframe = pd.read_json(data, orient='split')
+    if 'date' in dataframe.columns:
+        dataframe['date'] = pd.to_datetime(dataframe['date'], unit='ms', utc=True)
+
+    return dataframe
+
+
+def remove_entry_exit_signals(dataframe: pd.DataFrame):
+    """
+    Remove Entry and Exit signals from a DataFrame
+
+    :param dataframe: The DataFrame to remove signals from
+    """
+    dataframe[SignalType.ENTER_LONG.value] = 0
+    dataframe[SignalType.EXIT_LONG.value] = 0
+    dataframe[SignalType.ENTER_SHORT.value] = 0
+    dataframe[SignalType.EXIT_SHORT.value] = 0
+    dataframe[SignalTagType.ENTER_TAG.value] = None
+    dataframe[SignalTagType.EXIT_TAG.value] = None
+
+    return dataframe
+
+
+def append_candles_to_dataframe(left: pd.DataFrame, right: pd.DataFrame) -> pd.DataFrame:
+    """
+    Append the `right` dataframe to the `left` dataframe
+
+    :param left: The full dataframe you want appended to
+    :param right: The new dataframe containing the data you want appended
+    :returns: The dataframe with the right data in it
+    """
+    if left.iloc[-1]['date'] != right.iloc[-1]['date']:
+        left = pd.concat([left, right])
+
+    # Only keep the last 1500 candles in memory
+    left = left[-1500:] if len(left) > 1500 else left
+    left.reset_index(drop=True, inplace=True)
+
+    return left

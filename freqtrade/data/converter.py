@@ -3,14 +3,15 @@ Functions to convert data from one format to another
 """
 import itertools
 import logging
-from datetime import datetime, timezone
 from operator import itemgetter
-from typing import Any, Dict, List
+from typing import Dict, List
 
+import numpy as np
 import pandas as pd
 from pandas import DataFrame, to_datetime
 
-from freqtrade.constants import DEFAULT_DATAFRAME_COLUMNS, DEFAULT_TRADES_COLUMNS, TradeList
+from freqtrade.constants import DEFAULT_DATAFRAME_COLUMNS, DEFAULT_TRADES_COLUMNS, Config, TradeList
+from freqtrade.enums import CandleType
 
 
 logger = logging.getLogger(__name__)
@@ -46,8 +47,7 @@ def ohlcv_to_dataframe(ohlcv: list, timeframe: str, pair: str, *,
 
 
 def clean_ohlcv_dataframe(data: DataFrame, timeframe: str, pair: str, *,
-                          fill_missing: bool = True,
-                          drop_incomplete: bool = True) -> DataFrame:
+                          fill_missing: bool, drop_incomplete: bool) -> DataFrame:
     """
     Cleanse a OHLCV dataframe by
       * Grouping it by date (removes duplicate tics)
@@ -137,11 +137,9 @@ def trim_dataframe(df: DataFrame, timerange, df_date_col: str = 'date',
         df = df.iloc[startup_candles:, :]
     else:
         if timerange.starttype == 'date':
-            start = datetime.fromtimestamp(timerange.startts, tz=timezone.utc)
-            df = df.loc[df[df_date_col] >= start, :]
+            df = df.loc[df[df_date_col] >= timerange.startdt, :]
     if timerange.stoptype == 'date':
-        stop = datetime.fromtimestamp(timerange.stopts, tz=timezone.utc)
-        df = df.loc[df[df_date_col] <= stop, :]
+        df = df.loc[df[df_date_col] <= timerange.stopdt, :]
     return df
 
 
@@ -236,7 +234,7 @@ def trades_to_ohlcv(trades: TradeList, timeframe: str) -> DataFrame:
     return df_new.loc[:, DEFAULT_DATAFRAME_COLUMNS]
 
 
-def convert_trades_format(config: Dict[str, Any], convert_from: str, convert_to: str, erase: bool):
+def convert_trades_format(config: Config, convert_from: str, convert_to: str, erase: bool):
     """
     Convert trades from one format to another format.
     :param config: Config dictionary
@@ -261,13 +259,20 @@ def convert_trades_format(config: Dict[str, Any], convert_from: str, convert_to:
             src.trades_purge(pair=pair)
 
 
-def convert_ohlcv_format(config: Dict[str, Any], convert_from: str, convert_to: str, erase: bool):
+def convert_ohlcv_format(
+    config: Config,
+    convert_from: str,
+    convert_to: str,
+    erase: bool,
+    candle_type: CandleType
+):
     """
     Convert OHLCV from one format to another
     :param config: Config dictionary
     :param convert_from: Source format
     :param convert_to: Target format
     :param erase: Erase source data (does not apply if source and target format are identical)
+    :param candle_type: Any of the enum CandleType (must match trading mode!)
     """
     from freqtrade.data.history.idatahandler import get_datahandler
     src = get_datahandler(config['datadir'], convert_from)
@@ -279,8 +284,12 @@ def convert_ohlcv_format(config: Dict[str, Any], convert_from: str, convert_to: 
         config['pairs'] = []
         # Check timeframes or fall back to timeframe.
         for timeframe in timeframes:
-            config['pairs'].extend(src.ohlcv_get_pairs(config['datadir'],
-                                                       timeframe))
+            config['pairs'].extend(src.ohlcv_get_pairs(
+                config['datadir'],
+                timeframe,
+                candle_type=candle_type
+            ))
+        config['pairs'] = sorted(set(config['pairs']))
     logger.info(f"Converting candle (OHLCV) data for {config['pairs']}")
 
     for timeframe in timeframes:
@@ -289,10 +298,42 @@ def convert_ohlcv_format(config: Dict[str, Any], convert_from: str, convert_to: 
                                   timerange=None,
                                   fill_missing=False,
                                   drop_incomplete=False,
-                                  startup_candles=0)
-            logger.info(f"Converting {len(data)} candles for {pair}")
+                                  startup_candles=0,
+                                  candle_type=candle_type)
+            logger.info(f"Converting {len(data)} {timeframe} {candle_type} candles for {pair}")
             if len(data) > 0:
-                trg.ohlcv_store(pair=pair, timeframe=timeframe, data=data)
+                trg.ohlcv_store(
+                    pair=pair,
+                    timeframe=timeframe,
+                    data=data,
+                    candle_type=candle_type
+                )
                 if erase and convert_from != convert_to:
                     logger.info(f"Deleting source data for {pair} / {timeframe}")
-                    src.ohlcv_purge(pair=pair, timeframe=timeframe)
+                    src.ohlcv_purge(pair=pair, timeframe=timeframe, candle_type=candle_type)
+
+
+def reduce_dataframe_footprint(df: DataFrame) -> DataFrame:
+    """
+    Ensure all values are float32 in the incoming dataframe.
+    :param df: Dataframe to be converted to float/int 32s
+    :return: Dataframe converted to float/int 32s
+    """
+
+    logger.debug(f"Memory usage of dataframe is "
+                 f"{df.memory_usage().sum() / 1024**2:.2f} MB")
+
+    df_dtypes = df.dtypes
+    for column, dtype in df_dtypes.items():
+        if column in ['open', 'high', 'low', 'close', 'volume']:
+            continue
+        if dtype == np.float64:
+            df_dtypes[column] = np.float32
+        elif dtype == np.int64:
+            df_dtypes[column] = np.int32
+    df = df.astype(df_dtypes)
+
+    logger.debug(f"Memory usage after optimization is: "
+                 f"{df.memory_usage().sum() / 1024**2:.2f} MB")
+
+    return df
