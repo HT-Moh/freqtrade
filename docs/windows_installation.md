@@ -5,6 +5,30 @@ We **strongly** recommend that Windows users use [Docker](docker_quickstart.md) 
 If that is not possible, try using the Windows Linux subsystem (WSL) - for which the Ubuntu instructions should work.
 Otherwise, please follow the instructions below.
 
+All instructions assume that python 3.10+ is installed and available.
+
+## Clone the git repository
+
+First of all clone the repository by running:
+
+``` powershell
+git clone https://github.com/freqtrade/freqtrade.git
+```
+
+Now, choose your installation method, either automatically via script (recommended) or manually following the corresponding instructions.
+
+## Install freqtrade automatically
+
+### Run the installation script
+
+The script will ask you a few questions to determine which parts should be installed.
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy Bypass
+cd freqtrade
+. .\setup.ps1
+```
+
 ## Install freqtrade manually
 
 !!! Note "64bit Python version"
@@ -14,25 +38,19 @@ Otherwise, please follow the instructions below.
 !!! Hint
     Using the [Anaconda Distribution](https://www.anaconda.com/distribution/) under Windows can greatly help with installation problems. Check out the [Anaconda installation section](installation.md#installation-with-conda) in the documentation for more information.
 
-### 1. Clone the git repository
+### Install ta-lib
 
-```bash
-git clone https://github.com/freqtrade/freqtrade.git
-```
+Install ta-lib according to the [ta-lib documentation](https://github.com/TA-Lib/ta-lib-python#windows).
 
-### 2. Install ta-lib
+As compiling from source on windows has heavy dependencies (requires a partial visual studio installation), Freqtrade provides these dependencies (in the binary wheel format) for the latest 3 Python versions (3.10, 3.11 and 3.12) and for 64bit Windows.
+These Wheels are also used by CI running on windows, and are therefore tested together with freqtrade.
 
-Install ta-lib according to the [ta-lib documentation](https://github.com/mrjbq7/ta-lib#windows).
-
-As compiling from source on windows has heavy dependencies (requires a partial visual studio installation), there is also a repository of unofficial pre-compiled windows Wheels [here](https://www.lfd.uci.edu/~gohlke/pythonlibs/#ta-lib), which need to be downloaded and installed using `pip install TA_Lib-0.4.25-cp38-cp38-win_amd64.whl` (make sure to use the version matching your python version).
-
-Freqtrade provides these dependencies for the latest 3 Python versions (3.8, 3.9 and 3.10) and for 64bit Windows.
 Other versions must be downloaded from the above link.
 
 ``` powershell
 cd \path\freqtrade
-python -m venv .env
-.env\Scripts\activate.ps1
+python -m venv .venv
+.venv\Scripts\activate.ps1
 # optionally install ta-lib from wheel
 # Eventually adjust the below filename to match the downloaded wheel
 pip install --find-links build_helpers\ TA-Lib -U
@@ -44,8 +62,6 @@ freqtrade
 !!! Note "Use Powershell"
     The above installation script assumes you're using powershell on a 64bit windows.
     Commands for the legacy CMD windows console may differ.
-
-> Thanks [Owdr](https://github.com/Owdr) for the commands. Source: [Issue #222](https://github.com/freqtrade/freqtrade/issues/222)
 
 ### Error during installation on Windows
 

@@ -11,7 +11,7 @@ function check_installed_pip() {
    ${PYTHON} -m pip > /dev/null
    if [ $? -ne 0 ]; then
         echo_block "Installing Pip for ${PYTHON}"
-        curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+        curl https://bootstrap.pypa.io/get-pip.py -s -o get-pip.py
         ${PYTHON} get-pip.py
         rm get-pip.py
    fi
@@ -25,7 +25,7 @@ function check_installed_python() {
         exit 2
     fi
 
-    for v in 10 9 8
+    for v in 12 11 10
     do
         PYTHON="python3.${v}"
         which $PYTHON
@@ -36,21 +36,20 @@ function check_installed_python() {
         fi
     done
 
-    echo "No usable python found. Please make sure to have python3.8 or newer installed."
+    echo "No usable python found. Please make sure to have python3.10 or newer installed."
     exit 1
 }
 
 function updateenv() {
-    echo_block "Updating your virtual env"
-    if [ ! -f .env/bin/activate ]; then
+    echo_block "Updating your virtual environment"
+    if [ ! -f .venv/bin/activate ]; then
         echo "Something went wrong, no virtual environment found."
         exit 1
     fi
-    source .env/bin/activate
+    source .venv/bin/activate
     SYS_ARCH=$(uname -m)
     echo "pip install in-progress. Please wait..."
-    # Setuptools 65.5.0 is the last version that can install gym==0.21.0
-    ${PYTHON} -m pip install --upgrade pip wheel setuptools==65.5.1
+    ${PYTHON} -m pip install --upgrade pip wheel setuptools
     REQUIREMENTS_HYPEROPT=""
     REQUIREMENTS_PLOT=""
     REQUIREMENTS_FREQAI=""
@@ -85,7 +84,7 @@ function updateenv() {
         if [[ $REPLY =~ ^[Yy]$ ]]
         then
             REQUIREMENTS_FREQAI="-r requirements-freqai.txt --use-pep517"
-            read -p "Do you also want dependencies for freqai-rl (~700mb additional space required) [y/N]? "
+            read -p "Do you also want dependencies for freqai-rl or PyTorch (~700mb additional space required) [y/N]? "
             if [[ $REPLY =~ ^[Yy]$ ]]
             then
                 REQUIREMENTS_FREQAI="-r requirements-freqai-rl.txt"
@@ -121,7 +120,7 @@ function updateenv() {
 
 # Install tab lib
 function install_talib() {
-    if [ -f /usr/local/lib/libta_lib.a ]; then
+    if [ -f /usr/local/lib/libta_lib.a ] || [ -f /usr/local/lib/libta_lib.so ] || [ -f /usr/lib/libta_lib.so ]; then
         echo "ta-lib already installed, skipping"
         return
     fi
@@ -162,12 +161,12 @@ function install_macos() {
         /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
     fi
 
-    brew install gettext
+    brew install gettext libomp
 
     #Gets number after decimal in python version
     version=$(egrep -o 3.\[0-9\]+ <<< $PYTHON | sed 's/3.//g')
 
-    if [[ $version -ge 9 ]]; then               #Checks if python version >= 3.9
+    if [[ $version -ge 10 ]]; then               #Checks if python version >= 3.10
         install_mac_newer_python_dependencies
     fi
 }
@@ -187,7 +186,45 @@ function install_redhat() {
 # Upgrade the bot
 function update() {
     git pull
+    if [ -f .env/bin/activate  ]; then
+        # Old environment found - updating to new environment.
+        recreate_environments
+    fi
     updateenv
+    echo "Update completed."
+    echo_block "Don't forget to activate your virtual environment with 'source .venv/bin/activate'!"
+
+}
+
+function check_git_changes() {
+    if [ -z "$(git status --porcelain)" ]; then
+        echo "No changes in git directory"
+        return 1
+    else
+        echo "Changes in git directory"
+        return 0
+    fi
+}
+
+function recreate_environments() {
+    if [ -d ".env" ]; then
+        # Remove old virtual env
+        echo "- Deleting your previous virtual env"
+        echo "Warning: Your new environment will be at .venv!"
+        rm -rf .env
+    fi
+    if [ -d ".venv" ]; then
+        echo "- Deleting your previous virtual env"
+        rm -rf .venv
+    fi
+
+    echo
+    ${PYTHON} -m venv .venv
+    if [ $? -ne 0 ]; then
+        echo "Could not create virtual environment. Leaving now"
+        exit 1
+    fi
+
 }
 
 # Reset Develop or Stable branch
@@ -196,41 +233,33 @@ function reset() {
 
     if [ "1" == $(git branch -vv |grep -cE "\* develop|\* stable") ]
     then
+        if check_git_changes; then
+            read -p "Keep your local changes? (Otherwise will remove all changes you made!) [Y/n]? "
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
 
-        read -p "Reset git branch? (This will remove all changes you made!) [y/N]? "
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+                git fetch -a
 
-            git fetch -a
-
-            if [ "1" == $(git branch -vv | grep -c "* develop") ]
-            then
-                echo "- Hard resetting of 'develop' branch."
-                git reset --hard origin/develop
-            elif [ "1" == $(git branch -vv | grep -c "* stable") ]
-            then
-                echo "- Hard resetting of 'stable' branch."
-                git reset --hard origin/stable
+                if [ "1" == $(git branch -vv | grep -c "* develop") ]
+                then
+                    echo "- Hard resetting of 'develop' branch."
+                    git reset --hard origin/develop
+                elif [ "1" == $(git branch -vv | grep -c "* stable") ]
+                then
+                    echo "- Hard resetting of 'stable' branch."
+                    git reset --hard origin/stable
+                fi
             fi
         fi
     else
         echo "Reset ignored because you are not on 'stable' or 'develop'."
     fi
+    recreate_environments
 
-    if [ -d ".env" ]; then
-        echo "- Deleting your previous virtual env"
-        rm -rf .env
-    fi
-    echo
-    ${PYTHON} -m venv .env
-    if [ $? -ne 0 ]; then
-        echo "Could not create virtual environment. Leaving now"
-        exit 1
-    fi
     updateenv
 }
 
 function config() {
-    echo_block "Please use 'freqtrade new-config -c config.json' to generate a new configuration file."
+    echo_block "Please use 'freqtrade new-config -c user_data/config.json' to generate a new configuration file."
 }
 
 function install() {
@@ -248,7 +277,7 @@ function install() {
         install_redhat
     else
         echo "This script does not support your OS."
-        echo "If you have Python version 3.8 - 3.10, pip, virtualenv, ta-lib you can continue."
+        echo "If you have Python version 3.10 - 3.12, pip, virtualenv, ta-lib you can continue."
         echo "Wait 10 seconds to continue the next install steps or use ctrl+c to interrupt this shell."
         sleep 10
     fi
@@ -256,9 +285,9 @@ function install() {
     reset
     config
     echo_block "Run the bot !"
-    echo "You can now use the bot by executing 'source .env/bin/activate; freqtrade <subcommand>'."
-    echo "You can see the list of available bot sub-commands by executing 'source .env/bin/activate; freqtrade --help'."
-    echo "You verify that freqtrade is installed successfully by running 'source .env/bin/activate; freqtrade --version'."
+    echo "You can now use the bot by executing 'source .venv/bin/activate; freqtrade <subcommand>'."
+    echo "You can see the list of available bot sub-commands by executing 'source .venv/bin/activate; freqtrade --help'."
+    echo "You verify that freqtrade is installed successfully by running 'source .venv/bin/activate; freqtrade --version'."
 }
 
 function plot() {
@@ -275,7 +304,7 @@ function help() {
     echo "	-p,--plot       Install dependencies for Plotting scripts."
 }
 
-# Verify if 3.8+ is installed
+# Verify if 3.10+ is installed
 check_installed_python
 
 case $* in

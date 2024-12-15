@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 
-from gym import spaces
+from gymnasium import spaces
 
 from freqtrade.freqai.RL.BaseEnvironment import BaseEnvironment, Positions
 
@@ -20,6 +20,7 @@ class Base4ActionRLEnv(BaseEnvironment):
     """
     Base class for a 4 action environment
     """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.actions = Actions
@@ -48,48 +49,44 @@ class Base4ActionRLEnv(BaseEnvironment):
         self._update_unrealized_total_profit()
         step_reward = self.calculate_reward(action)
         self.total_reward += step_reward
-        self.tensorboard_log(self.actions._member_names_[action])
+        self.tensorboard_log(self.actions._member_names_[action], category="actions")
 
         trade_type = None
         if self.is_tradesignal(action):
-            """
-            Action: Neutral, position: Long ->  Close Long
-            Action: Neutral, position: Short -> Close Short
-
-            Action: Long, position: Neutral -> Open Long
-            Action: Long, position: Short -> Close Short and Open Long
-
-            Action: Short, position: Neutral -> Open Short
-            Action: Short, position: Long -> Close Long and Open Short
-            """
-
             if action == Actions.Neutral.value:
                 self._position = Positions.Neutral
                 trade_type = "neutral"
                 self._last_trade_tick = None
             elif action == Actions.Long_enter.value:
                 self._position = Positions.Long
-                trade_type = "long"
+                trade_type = "enter_long"
                 self._last_trade_tick = self._current_tick
             elif action == Actions.Short_enter.value:
                 self._position = Positions.Short
-                trade_type = "short"
+                trade_type = "enter_short"
                 self._last_trade_tick = self._current_tick
             elif action == Actions.Exit.value:
                 self._update_total_profit()
                 self._position = Positions.Neutral
-                trade_type = "neutral"
+                trade_type = "exit"
                 self._last_trade_tick = None
             else:
                 print("case not defined")
 
             if trade_type is not None:
                 self.trade_history.append(
-                    {'price': self.current_price(), 'index': self._current_tick,
-                     'type': trade_type})
+                    {
+                        "price": self.current_price(),
+                        "index": self._current_tick,
+                        "type": trade_type,
+                        "profit": self.get_unrealized_profit(),
+                    }
+                )
 
-        if (self._total_profit < self.max_drawdown or
-                self._total_unrealized_profit < self.max_drawdown):
+        if (
+            self._total_profit < self.max_drawdown
+            or self._total_unrealized_profit < self.max_drawdown
+        ):
             self._done = True
 
         self._position_history.append(self._position)
@@ -101,28 +98,33 @@ class Base4ActionRLEnv(BaseEnvironment):
             total_profit=self._total_profit,
             position=self._position.value,
             trade_duration=self.get_trade_duration(),
-            current_profit_pct=self.get_unrealized_profit()
+            current_profit_pct=self.get_unrealized_profit(),
         )
 
         observation = self._get_observation()
 
+        # user can play with time if they want
+        truncated = False
+
         self._update_history(info)
 
-        return observation, step_reward, self._done, info
+        return observation, step_reward, self._done, truncated, info
 
     def is_tradesignal(self, action: int) -> bool:
         """
         Determine if the signal is a trade signal
         e.g.: agent wants a Actions.Long_exit while it is in a Positions.short
         """
-        return not ((action == Actions.Neutral.value and self._position == Positions.Neutral) or
-                    (action == Actions.Neutral.value and self._position == Positions.Short) or
-                    (action == Actions.Neutral.value and self._position == Positions.Long) or
-                    (action == Actions.Short_enter.value and self._position == Positions.Short) or
-                    (action == Actions.Short_enter.value and self._position == Positions.Long) or
-                    (action == Actions.Exit.value and self._position == Positions.Neutral) or
-                    (action == Actions.Long_enter.value and self._position == Positions.Long) or
-                    (action == Actions.Long_enter.value and self._position == Positions.Short))
+        return not (
+            (action == Actions.Neutral.value and self._position == Positions.Neutral)
+            or (action == Actions.Neutral.value and self._position == Positions.Short)
+            or (action == Actions.Neutral.value and self._position == Positions.Long)
+            or (action == Actions.Short_enter.value and self._position == Positions.Short)
+            or (action == Actions.Short_enter.value and self._position == Positions.Long)
+            or (action == Actions.Exit.value and self._position == Positions.Neutral)
+            or (action == Actions.Long_enter.value and self._position == Positions.Long)
+            or (action == Actions.Long_enter.value and self._position == Positions.Short)
+        )
 
     def _is_valid(self, action: int) -> bool:
         """

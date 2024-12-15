@@ -2,9 +2,10 @@
 -r requirements-freqai.txt
 
 # Required for freqai-rl
-torch==1.13.1
-stable-baselines3==1.7.0
-sb3-contrib==1.7.0
-# Gym is forced to this version by stable-baselines3.
-setuptools==65.5.1 # Should be removed when gym is fixed.
-gym==0.21
+torch==2.2.2; sys_platform == 'darwin' and platform_machine == 'x86_64'
+torch==2.5.1; sys_platform != 'darwin' or platform_machine != 'x86_64'
+gymnasium==0.29.1
+stable_baselines3==2.4.0
+sb3_contrib>=2.2.1
+# Progress bar for stable-baselines3 and sb3-contrib
+tqdm==4.67.1

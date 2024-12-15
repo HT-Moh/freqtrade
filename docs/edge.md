@@ -2,6 +2,10 @@
 
 The `Edge Positioning` module uses probability to calculate your win rate and risk reward ratio. It will use these statistics to control your strategy trade entry points, position size and, stoploss.
 
+!!! Danger "Deprecated functionality"
+    `Edge positioning` (or short Edge) is currently in maintenance mode only (we keep existing functionality alive) and should be considered as deprecated.
+    It will currently not receive new features until either someone stepped forward to take up ownership of that module - or we'll decide to remove edge from freqtrade.
+
 !!! Warning
     When using `Edge positioning` with a dynamic whitelist (VolumePairList), make sure to also use `AgeFilter` and set it to at least `calculate_since_number_of_days` to avoid problems with missing data.
 
@@ -133,7 +137,7 @@ $$ R = \frac{\text{average_profit}}{\text{average_loss}} = \frac{\mu_{win}}{\mu_
 
 ### Expectancy
 
-By combining the Win Rate $W$ and and the Risk Reward ratio $R$ to create an expectancy ratio $E$. A expectance ratio is the expected return of the investment made in a trade. We can compute the value of $E$ as follows:
+By combining the Win Rate $W$ and the Risk Reward ratio $R$ to create an expectancy ratio $E$. A expectance ratio is the expected return of the investment made in a trade. We can compute the value of $E$ as follows:
 
 $$E = R * W - L$$
 

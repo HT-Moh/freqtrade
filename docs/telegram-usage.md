@@ -53,13 +53,14 @@ You can use bots in telegram groups by just adding them to the group. You can fi
 }
 ```
 
-For the Freqtrade configuration, you can then use the the full value (including `-` if it's there) as string:
+For the Freqtrade configuration, you can then use the full value (including `-` if it's there) as string:
 
 ```json
    "chat_id": "-1001332619709"
 ```
+
 !!! Warning "Using telegram groups"
-    When using telegram groups, you're giving every member of the telegram group access to your freqtrade bot and to all commands possible via telegram. Please make sure that you can trust everyone in the telegram group to avoid unpleasent surprises.
+    When using telegram groups, you're giving every member of the telegram group access to your freqtrade bot and to all commands possible via telegram. Please make sure that you can trust everyone in the telegram group to avoid unpleasant surprises.
 
 ## Control telegram noise
 
@@ -93,9 +94,12 @@ Example configuration showing the different settings:
             "trailing_stop_loss": "on",
             "stop_loss": "on",
             "stoploss_on_exchange": "on",
-            "custom_exit": "silent",
-            "partial_exit": "on"
+            "custom_exit": "silent",  // custom_exit without specifying an exit reason
+            "partial_exit": "on",
+            // "custom_exit_message": "silent",  // Disable individual custom exit reasons
+            "*": "off"  // Disable all other exit reasons
         },
+        // "exit": "off",  // Simplistic configuration to disable all exit messages
         "exit_cancel": "on",
         "exit_fill": "off",
         "protection_trigger": "off",
@@ -108,16 +112,16 @@ Example configuration showing the different settings:
 },
 ```
 
-`entry` notifications are sent when the order is placed, while `entry_fill` notifications are sent when the order is filled on the exchange.
-`exit` notifications are sent when the order is placed, while `exit_fill` notifications are sent when the order is filled on the exchange.
-`*_fill` notifications are off by default and must be explicitly enabled.
-`protection_trigger` notifications are sent when a protection triggers and `protection_trigger_global` notifications trigger when global protections are triggered.
-`strategy_msg` - Receive notifications from the strategy, sent via `self.dp.send_msg()` from the strategy [more details](strategy-customization.md#send-notification).
-`show_candle` - show candle values as part of entry/exit messages. Only possible values are `"ohlc"` or `"off"`.
-
-`balance_dust_level` will define what the `/balance` command takes as "dust" - Currencies with a balance below this will be shown.
-`allow_custom_messages` completely disable strategy messages.
-`reload` allows you to disable reload-buttons on selected messages.
+* `entry` notifications are sent when the order is placed, while `entry_fill` notifications are sent when the order is filled on the exchange.  
+* `exit` notifications are sent when the order is placed, while `exit_fill` notifications are sent when the order is filled on the exchange.  
+    Exit messages (`exit` and `exit_fill`) can be further controlled at individual exit reasons level, with the specific exit reason as the key. the default for all exit reasons is `on` - but can be configured via special `*` key - which will act as a wildcard for all exit reasons that are not explicitly defined.
+* `*_fill` notifications are off by default and must be explicitly enabled.  
+* `protection_trigger` notifications are sent when a protection triggers and `protection_trigger_global` notifications trigger when global protections are triggered.  
+* `strategy_msg` - Receive notifications from the strategy, sent via `self.dp.send_msg()` from the strategy [more details](strategy-customization.md#send-notification).  
+* `show_candle` - show candle values as part of entry/exit messages. Only possible values are `"ohlc"` or `"off"`.  
+* `balance_dust_level` will define what the `/balance` command takes as "dust" - Currencies with a balance below this will be shown.  
+* `allow_custom_messages` completely disable strategy messages.  
+* `reload` allows you to disable reload-buttons on selected messages.  
 
 ## Create a custom keyboard (command shortcut buttons)
 
@@ -152,7 +156,7 @@ You can create your own keyboard in `config.json`:
 !!! Note "Supported Commands"
     Only the following commands are allowed. Command arguments are not supported!
 
-    `/start`, `/stop`, `/status`, `/status table`, `/trades`, `/profit`, `/performance`, `/daily`, `/stats`, `/count`, `/locks`, `/balance`, `/stopentry`, `/reload_config`, `/show_config`, `/logs`, `/whitelist`, `/blacklist`, `/edge`, `/help`, `/version`
+    `/start`, `/stop`, `/status`, `/status table`, `/trades`, `/profit`, `/performance`, `/daily`, `/stats`, `/count`, `/locks`, `/balance`, `/stopentry`, `/reload_config`, `/show_config`, `/logs`, `/whitelist`, `/blacklist`, `/edge`, `/help`, `/version`, `/marketdir`
 
 ## Telegram commands
 
@@ -162,28 +166,40 @@ official commands. You can ask at any moment for help with `/help`.
 
 |  Command | Description |
 |----------|-------------|
+| **System commands**
 | `/start` | Starts the trader
 | `/stop` | Stops the trader
 | `/stopbuy | /stopentry` | Stops the trader from opening new trades. Gracefully closes open trades according to their rules.
 | `/reload_config` | Reloads the configuration file
 | `/show_config` | Shows part of the current configuration with relevant settings to operation
 | `/logs [limit]` | Show last log messages.
+| `/help` | Show help message
+| `/version` | Show version
+| **Status** |
 | `/status` | Lists all open trades
 | `/status <trade_id>` | Lists one or more specific trade. Separate multiple <trade_id> with a blank space.
 | `/status table` | List all open trades in a table format. Pending buy orders are marked with an asterisk (*) Pending sell orders are marked with a double asterisk (**)
+| `/order <trade_id>` | Lists orders of one or more specific trade. Separate multiple <trade_id> with a blank space.
 | `/trades [limit]` | List all recently closed trades in a table format.
-| `/delete <trade_id>` | Delete a specific trade from the Database. Tries to close open orders. Requires manual handling of this trade on the exchange.
 | `/count` | Displays number of trades used and available
 | `/locks` | Show currently locked pairs.
 | `/unlock <pair or lock_id>` | Remove the lock for this pair (or for this lock id).
-| `/profit [<n>]` | Display a summary of your profit/loss from close trades and some stats about your performance, over the last n days (all trades by default)
+| `/marketdir [long | short | even | none]` | Updates the user managed variable that represents the current market direction. If no direction is provided, the currently set direction will be displayed.
+| `/list_custom_data <trade_id> [key]` | List custom_data for Trade ID & Key combination. If no Key is supplied it will list all key-value pairs found for that Trade ID.
+| **Modify Trade states** |
 | `/forceexit <trade_id> | /fx <tradeid>` | Instantly exits the given trade  (Ignoring `minimum_roi`).
 | `/forceexit all | /fx all` | Instantly exits all open trades (Ignoring `minimum_roi`).
 | `/fx` | alias for `/forceexit`
 | `/forcelong <pair> [rate]` | Instantly buys the given pair. Rate is optional and only applies to limit orders. (`force_entry_enable` must be set to True)
 | `/forceshort <pair> [rate]` | Instantly shorts the given pair. Rate is optional and only applies to limit orders. This will only work on non-spot markets. (`force_entry_enable` must be set to True)
+| `/delete <trade_id>` | Delete a specific trade from the Database. Tries to close open orders. Requires manual handling of this trade on the exchange.
+| `/reload_trade <trade_id>` | Reload a trade from the Exchange. Only works in live, and can potentially help recover a trade that was manually sold on the exchange.
+| `/cancel_open_order <trade_id> | /coo <trade_id>` | Cancel an open order for a trade.
+| **Metrics** |
+| `/profit [<n>]` | Display a summary of your profit/loss from close trades and some stats about your performance, over the last n days (all trades by default)
 | `/performance` | Show performance of each finished trade grouped by pair
-| `/balance` | Show account balance per currency
+| `/balance` | Show bot managed balance per currency
+| `/balance full` | Show account balance per currency
 | `/daily <n>` | Shows profit or loss per day, over the last n days (n defaults to 7)
 | `/weekly <n>` | Shows profit or loss per week, over the last n weeks (n defaults to 8)
 | `/monthly <n>` | Shows profit or loss per month, over the last n months (n defaults to 6)
@@ -193,8 +209,6 @@ official commands. You can ask at any moment for help with `/help`.
 | `/whitelist [sorted] [baseonly]` | Show the current whitelist. Optionally display in alphabetical order and/or with just the base currency of each pairing.
 | `/blacklist [pair]` | Show the current blacklist, or adds a pair to the blacklist.
 | `/edge` | Show validated pairs by Edge if it is enabled.
-| `/help` | Show help message
-| `/version` | Show version
 
 ## Telegram commands in action
 
@@ -221,23 +235,23 @@ Once all positions are sold, run `/stop` to completely stop the bot.
 `/reload_config` resets "max_open_trades" to the value set in the configuration and resets this command.
 
 !!! Warning
-   The stop-buy signal is ONLY active while the bot is running, and is not persisted anyway, so restarting the bot will cause this to reset.
+    The stop-buy signal is ONLY active while the bot is running, and is not persisted anyway, so restarting the bot will cause this to reset.
 
 ### /status
 
 For each open trade, the bot will send you the following message.
 Enter Tag is configurable via Strategy.
 
-> **Trade ID:** `123` `(since 1 days ago)`
-> **Current Pair:** CVC/BTC
-> **Direction:** Long
-> **Leverage:** 1.0
-> **Amount:** `26.64180098`
-> **Enter Tag:** Awesome Long Signal
-> **Open Rate:** `0.00007489`
-> **Current Rate:** `0.00007489`
-> **Current Profit:** `12.95%`
-> **Stoploss:** `0.00007389 (-0.02%)`
+> **Trade ID:** `123` `(since 1 days ago)`  
+> **Current Pair:** CVC/BTC  
+> **Direction:** Long  
+> **Leverage:** 1.0  
+> **Amount:** `26.64180098`  
+> **Enter Tag:** Awesome Long Signal  
+> **Open Rate:** `0.00007489`  
+> **Current Rate:** `0.00007489`  
+> **Unrealized Profit:** `12.95%`  
+> **Stoploss:** `0.00007389 (-0.02%)`  
 
 ### /status table
 
@@ -264,27 +278,34 @@ current    max
 
 Return a summary of your profit/loss and performance.
 
-> **ROI:** Close trades
->   ∙ `0.00485701 BTC (2.2%) (15.2 Σ%)`
->   ∙ `62.968 USD`
-> **ROI:** All trades
->   ∙ `0.00255280 BTC (1.5%) (6.43 Σ%)`
->   ∙ `33.095 EUR`
->
-> **Total Trade Count:** `138`
-> **First Trade opened:** `3 days ago`
-> **Latest Trade opened:** `2 minutes ago`
-> **Avg. Duration:** `2:33:45`
-> **Best Performing:** `PAY/BTC: 50.23%`
-> **Trading volume:** `0.5 BTC`
-> **Profit factor:** `1.04`
-> **Max Drawdown:** `9.23% (0.01255 BTC)`
+> **ROI:** Close trades  
+>   ∙ `0.00485701 BTC (2.2%) (15.2 Σ%)`  
+>   ∙ `62.968 USD`  
+> **ROI:** All trades  
+>   ∙ `0.00255280 BTC (1.5%) (6.43 Σ%)`  
+>   ∙ `33.095 EUR`  
+>  
+> **Total Trade Count:** `138`  
+> **Bot started:** `2022-07-11 18:40:44`  
+> **First Trade opened:** `3 days ago`  
+> **Latest Trade opened:** `2 minutes ago`  
+> **Avg. Duration:** `2:33:45`  
+> **Best Performing:** `PAY/BTC: 50.23%`  
+> **Trading volume:** `0.5 BTC`  
+> **Profit factor:** `1.04`  
+> **Win / Loss:** `102 / 36`  
+> **Winrate:** `73.91%`  
+> **Expectancy (Ratio):** `4.87 (1.66)`  
+> **Max Drawdown:** `9.23% (0.01255 BTC)`  
 
-The relative profit of `1.2%` is the average profit per trade.
-The relative profit of `15.2 Σ%` is be based on the starting capital - so in this case, the starting capital was `0.00485701 * 1.152 = 0.00738 BTC`.
-Starting capital is either taken from the `available_capital` setting, or calculated by using current wallet size - profits.
-Profit Factor is calculated as gross profits / gross losses - and should serve as an overall metric for the strategy.
-Max drawdown corresponds to the backtesting metric `Absolute Drawdown (Account)` - calculated as `(Absolute Drawdown) / (DrawdownHigh + startingBalance)`.
+The relative profit of `1.2%` is the average profit per trade.  
+The relative profit of `15.2 Σ%` is be based on the starting capital - so in this case, the starting capital was `0.00485701 * 1.152 = 0.00738 BTC`.  
+**Starting capital(**) is either taken from the `available_capital` setting, or calculated by using current wallet size - profits.  
+**Profit Factor** is calculated as gross profits / gross losses - and should serve as an overall metric for the strategy.  
+**Expectancy** corresponds to the average return per currency unit at risk, i.e. the winrate and the risk-reward ratio (the average gain of winning trades compared to the average loss of losing trades).  
+**Expectancy Ratio** is expected profit or loss of a subsequent trade based on the performance of all past trades.  
+**Max drawdown** corresponds to the backtesting metric `Absolute Drawdown (Account)` - calculated as `(Absolute Drawdown) / (DrawdownHigh + startingBalance)`.  
+**Bot started date** will refer to the date the bot was first started. For older bots, this will default to the first trade's open date.  
 
 ### /forceexit <trade_id>
 
@@ -312,33 +333,34 @@ Note that for this to work, `force_entry_enable` needs to be set to true.
 ### /performance
 
 Return the performance of each crypto-currency the bot has sold.
-> Performance:
-> 1. `RCN/BTC 0.003 BTC (57.77%) (1)`
-> 2. `PAY/BTC 0.0012 BTC (56.91%) (1)`
-> 3. `VIB/BTC 0.0011 BTC (47.07%) (1)`
-> 4. `SALT/BTC 0.0010 BTC (30.24%) (1)`
-> 5. `STORJ/BTC 0.0009 BTC (27.24%) (1)`
-> ...
+> Performance:  
+> 1. `RCN/BTC 0.003 BTC (57.77%) (1)`  
+> 2. `PAY/BTC 0.0012 BTC (56.91%) (1)`  
+> 3. `VIB/BTC 0.0011 BTC (47.07%) (1)`  
+> 4. `SALT/BTC 0.0010 BTC (30.24%) (1)`  
+> 5. `STORJ/BTC 0.0009 BTC (27.24%) (1)`  
+> ...  
 
 ### /balance
 
 Return the balance of all crypto-currency your have on the exchange.
 
-> **Currency:** BTC
-> **Available:** 3.05890234
-> **Balance:** 3.05890234
-> **Pending:** 0.0
-
-> **Currency:** CVC
-> **Available:** 86.64180098
-> **Balance:** 86.64180098
-> **Pending:** 0.0
+> **Currency:** BTC  
+> **Available:** 3.05890234  
+> **Balance:** 3.05890234  
+> **Pending:** 0.0  
+>
+> **Currency:** CVC  
+> **Available:** 86.64180098  
+> **Balance:** 86.64180098  
+> **Pending:** 0.0  
 
 ### /daily <n>
 
 Per default `/daily` will return the 7 last days. The example below if for `/daily 3`:
 
 > **Daily Profit over the last 3 days:**
+
 ```
 Day (count)     USDT          USD         Profit %
 --------------  ------------  ----------  ----------
@@ -353,6 +375,7 @@ Per default `/weekly` will return the 8 last weeks, including the current week. 
 from Monday. The example below if for `/weekly 3`:
 
 > **Weekly Profit over the last 3 weeks (starting from Monday):**
+
 ```
 Monday (count)  Profit BTC      Profit USD   Profit %
 -------------  --------------  ------------    ----------
@@ -379,18 +402,18 @@ Month (count)  Profit BTC      Profit USD    Profit %
 
 Shows the current whitelist
 
-> Using whitelist `StaticPairList` with 22 pairs
+> Using whitelist `StaticPairList` with 22 pairs  
 > `IOTA/BTC, NEO/BTC, TRX/BTC, VET/BTC, ADA/BTC, ETC/BTC, NCASH/BTC, DASH/BTC, XRP/BTC, XVG/BTC, EOS/BTC, LTC/BTC, OMG/BTC, BTG/BTC, LSK/BTC, ZEC/BTC, HOT/BTC, IOTX/BTC, XMR/BTC, AST/BTC, XLM/BTC, NANO/BTC`
 
 ### /blacklist [pair]
 
 Shows the current blacklist.
 If Pair is set, then this pair will be added to the pairlist.
-Also supports multiple pairs, separated by a space.
+Also supports multiple pairs, separated by a space.  
 Use `/reload_config` to reset the blacklist.
 
-> Using blacklist `StaticPairList` with 2 pairs
->`DODGE/BTC`, `HOT/BTC`.
+> Using blacklist `StaticPairList` with 2 pairs  
+>`DODGE/BTC`, `HOT/BTC`.  
 
 ### /edge
 
@@ -410,3 +433,27 @@ ARDR/ETH   0.366667      0.143059       -0.01
 ### /version
 
 > **Version:** `0.14.3`
+
+### /marketdir
+
+If a market direction is provided the command updates the user managed variable that represents the current market direction.
+This variable is not set to any valid market direction on bot startup and must be set by the user. The example below is for `/marketdir long`:
+
+```
+Successfully updated marketdirection from none to long.
+```
+
+If no market direction is provided the command outputs the currently set market directions. The example below is for `/marketdir`:
+
+```
+Currently set marketdirection: even
+```
+
+You can use the market direction in your strategy via `self.market_direction`.
+
+!!! Warning "Bot restarts"
+    Please note that the market direction is not persisted, and will be reset after a bot restart/reload.
+
+!!! Danger "Backtesting"
+    As this value/variable is intended to be changed manually in dry/live trading.
+    Strategies using `market_direction` will probably not produce reliable, reproducible results (changes to this variable will not be reflected for backtesting). Use at your own risk.
